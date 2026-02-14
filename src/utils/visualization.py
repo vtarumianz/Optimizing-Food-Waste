@@ -589,6 +589,177 @@ class FoodWasteVisualizer:
         return fig
 
 
+    # ------------------------------------------------------------------
+    # Food Availability Model Plots
+    # ------------------------------------------------------------------
+
+    def plot_food_availability_dynamics(
+        self,
+        simulation: Dict[str, np.ndarray],
+        title: str = "Food Availability Model Dynamics",
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Plot F(t), E(t), W(t) time series from the food availability ODE model.
+
+        Args:
+            simulation: Dict with 't', 'F', 'E', 'W', 'S' arrays.
+            title: Plot title.
+            save_path: Optional path to save the figure.
+
+        Returns:
+            matplotlib Figure object.
+        """
+        t = simulation['t']
+        t_min = t * 60  # convert hours to minutes
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+        # F(t) — food available per student
+        ax = axes[0, 0]
+        ax.plot(t_min, simulation['F'], color='#3498db', linewidth=2)
+        ax.set_ylabel('Food per Student [lbs]')
+        ax.set_title('F(t) — Food Available', fontweight='bold')
+        ax.set_xlabel('Minutes')
+
+        # E(t) — food being eaten
+        ax = axes[0, 1]
+        ax.plot(t_min, simulation['E'], color='#e67e22', linewidth=2)
+        ax.set_ylabel('Food Being Eaten [lbs]')
+        ax.set_title('E(t) — Food in Process of Being Eaten', fontweight='bold')
+        ax.set_xlabel('Minutes')
+
+        # W(t) — cumulative waste
+        ax = axes[1, 0]
+        ax.plot(t_min, simulation['W'], color='#e74c3c', linewidth=2)
+        ax.set_ylabel('Cumulative Waste [lbs]')
+        ax.set_title('W(t) — Total Accumulated Waste', fontweight='bold')
+        ax.set_xlabel('Minutes')
+
+        # S(t) — student demand
+        ax = axes[1, 1]
+        ax.plot(t_min, simulation['S'], color='#27ae60', linewidth=2, drawstyle='steps-post')
+        ax.set_ylabel('Students Demanding Food')
+        ax.set_title('S(t) — Student Arrival Demand', fontweight='bold')
+        ax.set_xlabel('Minutes')
+
+        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
+
+    def plot_baseline_vs_optimized(
+        self,
+        baseline: Dict[str, np.ndarray],
+        optimized: Dict[str, np.ndarray],
+        strategy_name: str = "Optimized",
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Compare baseline and optimized W(t) trajectories.
+
+        Args:
+            baseline: Simulation dict from baseline run.
+            optimized: Simulation dict from optimized run.
+            strategy_name: Label for the optimized scenario.
+            save_path: Optional path to save the figure.
+
+        Returns:
+            matplotlib Figure object.
+        """
+        t_min = baseline['t'] * 60
+
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+        # W(t) comparison
+        ax = axes[0]
+        ax.plot(t_min, baseline['W'], label='Baseline', color='#e74c3c', linewidth=2)
+        ax.plot(t_min, optimized['W'], label=strategy_name, color='#27ae60',
+                linewidth=2, linestyle='--')
+        ax.set_xlabel('Minutes')
+        ax.set_ylabel('Waste [lbs]')
+        ax.set_title('W(t) — Waste Comparison', fontweight='bold')
+        ax.legend()
+
+        # F(t) comparison
+        ax = axes[1]
+        ax.plot(t_min, baseline['F'], label='Baseline', color='#3498db', linewidth=2)
+        ax.plot(t_min, optimized['F'], label=strategy_name, color='#2ecc71',
+                linewidth=2, linestyle='--')
+        ax.set_xlabel('Minutes')
+        ax.set_ylabel('Food per Student [lbs]')
+        ax.set_title('F(t) — Food Available', fontweight='bold')
+        ax.legend()
+
+        # E(t) comparison
+        ax = axes[2]
+        ax.plot(t_min, baseline['E'], label='Baseline', color='#e67e22', linewidth=2)
+        ax.plot(t_min, optimized['E'], label=strategy_name, color='#1abc9c',
+                linewidth=2, linestyle='--')
+        ax.set_xlabel('Minutes')
+        ax.set_ylabel('Food Being Eaten [lbs]')
+        ax.set_title('E(t) — Eating', fontweight='bold')
+        ax.legend()
+
+        plt.suptitle(f'Baseline vs {strategy_name}', fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
+
+    def plot_sensitivity(
+        self,
+        sensitivity_data: Dict[str, Dict[str, np.ndarray]],
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Plot sensitivity analysis: waste vs each parameter.
+
+        Args:
+            sensitivity_data: Dict mapping param name -> {'values', 'waste'}.
+            save_path: Optional path to save the figure.
+
+        Returns:
+            matplotlib Figure object.
+        """
+        n = len(sensitivity_data)
+        fig, axes = plt.subplots(1, n, figsize=(6 * n, 5))
+        if n == 1:
+            axes = [axes]
+
+        labels = {
+            'F0': 'Initial Food per Student [lbs]',
+            'waste_fraction': 'Plate Waste Fraction',
+            'alpha': 'Service Efficiency α [1/hr]',
+            'beta': 'Eating Rate β [1/hr]',
+        }
+        colors = ['#3498db', '#e74c3c', '#27ae60', '#9b59b6']
+
+        for ax, (param, data), color in zip(axes, sensitivity_data.items(), colors):
+            ax.plot(data['values'], data['waste'], color=color, linewidth=2)
+            idx_min = np.argmin(data['waste'])
+            ax.axvline(data['values'][idx_min], color='gray', linestyle='--', alpha=0.5)
+            ax.scatter([data['values'][idx_min]], [data['waste'][idx_min]],
+                       color=color, s=80, zorder=5)
+            ax.set_xlabel(labels.get(param, param), fontsize=11)
+            ax.set_ylabel('Total Waste W(T) [lbs]', fontsize=11)
+            ax.set_title(f'Sensitivity to {param}', fontweight='bold')
+
+        plt.suptitle('Sensitivity Analysis — Total Waste', fontsize=14,
+                     fontweight='bold', y=1.02)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
+
+
 if __name__ == "__main__":
     # Demo visualization
     print("Running visualization demo...")
