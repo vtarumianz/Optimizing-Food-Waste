@@ -2,19 +2,23 @@
 Food Availability Model with Waste Minimization
 Lawrenceville School Food Waste Optimization Project
 
-Models the dynamics of food service using coupled ODEs based on:
+Models the dynamics of food service using coupled ODEs:
     dF/dt = -(alpha/N) * S(t) * F(t)                         (food depletion)
     dE/dt = (1-w) * alpha * S(t) * F(t) - beta * E(t)        (food being eaten)
-    dW/dt = w * alpha * S(t) * F(t) + beta * E(t)            (total outflow)
+    dP/dt = w * alpha * S(t) * F(t)                           (plate waste)
+    dC/dt = beta * E(t)                                       (consumed food)
 
-Where W(t) in the original formulation captures ALL food that has left the
-system (both consumed and wasted). For optimization we decompose W into:
-    P(t) = plate waste   (the w fraction that is never eaten)
-    C(t) = consumed food (the (1-w) fraction, after eating time elapses)
-    U(t) = unused food remaining on the line = F(t)*N
+P(t) = plate waste only (what goes in compost bins, comparable to staff measurement)
+C(t) = consumed food (what students eat — NOT waste)
 
 True waste = P(T) + U(T)   (plate waste + food never served)
-We minimize this.
+where U(t) = F(t) * N is unused food remaining on the serving line.
+
+Calculus Optimization:
+    The waste rate dP/dt = w * alpha * S(t) * F(t) tells us how fast
+    plate waste accumulates at each moment. Finding max(dP/dt) via
+    d²P/dt² = 0 identifies the critical intervention point — the time
+    during lunch when waste reduction strategies would have maximum impact.
 
 State Variables:
     F(t) - food available per student [lbs/student]
@@ -48,7 +52,7 @@ class FoodAvailabilityParams:
     N: int = 700
     alpha: float = 6.0
     beta: float = 2.73
-    waste_fraction: float = 0.30
+    waste_fraction: float = 0.09
     F0: float = 1.3
     T: float = 2.0
     student_distribution: Tuple[float, float, float] = (0.80, 0.15, 0.05)
@@ -250,16 +254,16 @@ class FoodAvailabilityModel:
             Dict with baseline/optimized waste breakdown, optimal params.
         """
         bounds_map = {
-            'waste_fraction': [(0.05, 0.30)],
+            'waste_fraction': [(0.02, 0.15)],
             'portion_control': [(0.5, 1.3)],
             'service_and_portions': [
                 (0.5, 1.3),    # F0
-                (0.05, 0.30),  # waste_fraction
+                (0.02, 0.15),  # waste_fraction
                 (3.0, 12.0),   # alpha
             ],
             'full': [
                 (0.5, 1.3),    # F0
-                (0.05, 0.30),  # waste_fraction
+                (0.02, 0.15),  # waste_fraction
                 (3.0, 12.0),   # alpha
                 (0.3, 0.95),   # peak_frac
                 (0.03, 0.5),   # mid_frac
@@ -336,6 +340,75 @@ class FoodAvailabilityModel:
         for s in strategies:
             results[s] = self.optimize(strategy=s)
         return results
+
+    # ------------------------------------------------------------------
+    # Calculus-based waste rate optimization (dW/dt analysis)
+    # ------------------------------------------------------------------
+
+    def compute_waste_rate(self, params: Optional[FoodAvailabilityParams] = None,
+                           n_points: int = 1000) -> Dict[str, np.ndarray]:
+        """
+        Compute the waste accumulation rate dP/dt over time and find
+        the critical intervention point where dP/dt is maximum.
+
+        This is the calculus optimization: find t where d²P/dt² = 0
+        (inflection point of P(t), maximum of dP/dt).
+
+        Returns dict with:
+            't': time array [hours]
+            'dP_dt': plate waste rate at each time [lbs/hr]
+            'dW_dt_total': total outflow rate (plate waste + consumed) [lbs/hr]
+            't_critical': time of maximum plate waste rate [hours]
+            't_critical_min': same in minutes
+            'max_dP_dt': maximum plate waste rate [lbs/hr]
+            'max_dP_dt_per_min': maximum plate waste rate [lbs/min]
+            'S_at_critical': students present at critical time
+            'F_at_critical': food per student at critical time
+            'cumulative_fraction': fraction of total plate waste
+                                   accumulated by each time point
+        """
+        p = params or self.params
+        sim = self.simulate(p, n_points=n_points)
+        t = sim['t']
+        F = sim['F']
+        E = sim['E']
+        S = sim['S']
+
+        alpha = p.alpha
+        beta = p.beta
+        w = p.waste_fraction
+
+        # dP/dt = w * alpha * S(t) * F(t)   (plate waste rate)
+        dP_dt = w * alpha * S * F
+
+        # dC/dt = beta * E(t)               (consumption rate)
+        dC_dt = beta * E
+
+        # Total outflow rate (original dW/dt = dP/dt + dC/dt)
+        dW_dt_total = dP_dt + dC_dt
+
+        # Find critical time: where dP/dt is maximum
+        idx_critical = np.argmax(dP_dt)
+        t_critical = t[idx_critical]
+
+        # Cumulative fraction of plate waste over time
+        P = sim['P']
+        P_final = P[-1] if P[-1] > 0 else 1.0
+        cumulative_fraction = P / P_final
+
+        return {
+            't': t,
+            'dP_dt': dP_dt,
+            'dC_dt': dC_dt,
+            'dW_dt_total': dW_dt_total,
+            't_critical': t_critical,
+            't_critical_min': t_critical * 60,
+            'max_dP_dt': dP_dt[idx_critical],
+            'max_dP_dt_per_min': dP_dt[idx_critical] / 60,
+            'S_at_critical': S[idx_critical],
+            'F_at_critical': F[idx_critical],
+            'cumulative_fraction': cumulative_fraction,
+        }
 
     # ------------------------------------------------------------------
     # Sensitivity analysis
@@ -432,7 +505,7 @@ def run_baseline_and_optimize(verbose: bool = True) -> Dict:
     # --- Sensitivity ---
     sensitivity = {}
     for param, rng in [('F0', np.linspace(0.5, 1.5, 50)),
-                        ('waste_fraction', np.linspace(0.05, 0.40, 50)),
+                        ('waste_fraction', np.linspace(0.02, 0.20, 50)),
                         ('alpha', np.linspace(2.0, 12.0, 50))]:
         sensitivity[param] = model.sensitivity_analysis(param, rng)
 
