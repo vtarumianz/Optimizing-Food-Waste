@@ -29,7 +29,7 @@ def main():
     model = results['model']
     viz = FoodWasteVisualizer()
 
-    # 1. Baseline dynamics (F, E, P, W over time)
+    # 1. Baseline dynamics (F, E, P, S over time)
     baseline_sim = results['baseline_sim']
     viz.plot_food_availability_dynamics(
         baseline_sim,
@@ -38,7 +38,29 @@ def main():
     )
     print(f"\nSaved: {OUTPUT_DIR}/baseline_dynamics.png")
 
-    # 2. Baseline vs best optimized (full strategy)
+    # 2. Waste rate analysis (dP/dt over time, critical intervention point)
+    waste_rate = model.compute_waste_rate()
+    print("\n" + "=" * 70)
+    print(" CALCULUS OPTIMIZATION — WASTE RATE ANALYSIS")
+    print("=" * 70)
+    print(f"  Maximum plate waste rate:   {waste_rate['max_dP_dt_per_min']:.2f} lbs/min")
+    print(f"  Critical time (t_crit):     {waste_rate['t_critical_min']:.1f} minutes")
+    print(f"  Students at t_crit:         {waste_rate['S_at_critical']:.0f}")
+    print(f"  Food available at t_crit:   {waste_rate['F_at_critical']:.3f} lbs/student")
+    print()
+    print("  Interpretation:")
+    print(f"    Plate waste accumulates fastest at t = {waste_rate['t_critical_min']:.1f} min.")
+    print(f"    This is the critical intervention window.")
+    print(f"    Strategies targeting this time would have maximum impact.")
+
+    viz.plot_waste_rate(
+        waste_rate,
+        title="Waste Rate Analysis — Critical Intervention Point",
+        save_path=os.path.join(OUTPUT_DIR, 'waste_rate_analysis.png'),
+    )
+    print(f"\nSaved: {OUTPUT_DIR}/waste_rate_analysis.png")
+
+    # 3. Baseline vs best optimized (full strategy)
     best = results['optimized']['full']
     opt_sim = model.simulate(best['optimal_params'])
     viz.plot_baseline_vs_optimized(
@@ -49,7 +71,7 @@ def main():
     )
     print(f"Saved: {OUTPUT_DIR}/baseline_vs_optimized.png")
 
-    # 3. Sensitivity analysis
+    # 4. Sensitivity analysis
     viz.plot_sensitivity(
         results['sensitivity'],
         save_path=os.path.join(OUTPUT_DIR, 'sensitivity_analysis.png'),

@@ -600,10 +600,13 @@ class FoodWasteVisualizer:
         save_path: Optional[str] = None
     ) -> plt.Figure:
         """
-        Plot F(t), E(t), W(t) time series from the food availability ODE model.
+        Plot F(t), E(t), P(t), S(t) time series from the food availability ODE model.
+
+        Shows plate waste P(t) separately from consumed food C(t),
+        since only plate waste corresponds to the measured compost waste.
 
         Args:
-            simulation: Dict with 't', 'F', 'E', 'W', 'S' arrays.
+            simulation: Dict with 't', 'F', 'E', 'P', 'C', 'S' arrays.
             title: Plot title.
             save_path: Optional path to save the figure.
 
@@ -626,15 +629,28 @@ class FoodWasteVisualizer:
         ax = axes[0, 1]
         ax.plot(t_min, simulation['E'], color='#e67e22', linewidth=2)
         ax.set_ylabel('Food Being Eaten [lbs]')
-        ax.set_title('E(t) — Food in Process of Being Eaten', fontweight='bold')
+        ax.set_title('E(t) — Food Being Eaten', fontweight='bold')
         ax.set_xlabel('Minutes')
 
-        # W(t) — cumulative waste
+        # P(t) — cumulative plate waste (what goes in compost bins)
         ax = axes[1, 0]
-        ax.plot(t_min, simulation['W'], color='#e74c3c', linewidth=2)
-        ax.set_ylabel('Cumulative Waste [lbs]')
-        ax.set_title('W(t) — Total Accumulated Waste', fontweight='bold')
+        ax.plot(t_min, simulation['P'], color='#e74c3c', linewidth=2,
+                label='Plate Waste P(t)')
+        ax.plot(t_min, simulation['C'], color='#27ae60', linewidth=2,
+                linestyle='--', alpha=0.6, label='Consumed C(t)')
+        ax.set_ylabel('Cumulative [lbs]')
+        ax.set_title('P(t) — Plate Waste vs C(t) — Consumed', fontweight='bold')
         ax.set_xlabel('Minutes')
+        ax.legend(fontsize=9)
+
+        # Annotate final plate waste
+        final_P = simulation['P'][-1]
+        ax.annotate(f'Final plate waste: {final_P:.1f} lbs',
+                    xy=(t_min[-1], final_P),
+                    xytext=(t_min[-1] * 0.5, final_P * 1.2),
+                    arrowprops=dict(arrowstyle='->', color='#e74c3c'),
+                    fontsize=10, color='#e74c3c',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
 
         # S(t) — student demand
         ax = axes[1, 1]
@@ -644,6 +660,110 @@ class FoodWasteVisualizer:
         ax.set_xlabel('Minutes')
 
         plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
+
+    def plot_waste_rate(
+        self,
+        waste_rate_data: Dict[str, np.ndarray],
+        title: str = "Waste Accumulation Rate — Calculus Optimization",
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Plot dP/dt (plate waste rate) over time and mark the critical
+        intervention point where the rate is maximum.
+
+        This is the calculus-based optimization Ms. Patel requested:
+        find when dW/dt is maximum (d²W/dt² = 0).
+
+        Args:
+            waste_rate_data: Output from FoodAvailabilityModel.compute_waste_rate().
+            title: Plot title.
+            save_path: Optional path to save the figure.
+
+        Returns:
+            matplotlib Figure object.
+        """
+        t = waste_rate_data['t']
+        t_min = t * 60  # hours to minutes
+        dP_dt = waste_rate_data['dP_dt'] / 60  # convert lbs/hr to lbs/min
+        t_crit_min = waste_rate_data['t_critical_min']
+        max_rate = waste_rate_data['max_dP_dt_per_min']
+        cum_frac = waste_rate_data['cumulative_fraction']
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+        # Left panel: dP/dt over time
+        ax = axes[0]
+        ax.plot(t_min, dP_dt, color='#e74c3c', linewidth=2.5)
+        ax.fill_between(t_min, 0, dP_dt, alpha=0.2, color='#e74c3c')
+
+        # Mark critical point
+        ax.axvline(t_crit_min, color='#2c3e50', linestyle='--', linewidth=1.5,
+                   alpha=0.8, label=f'Critical time: t = {t_crit_min:.1f} min')
+        ax.scatter([t_crit_min], [max_rate], color='#2c3e50', s=100, zorder=5,
+                   edgecolors='white', linewidth=2)
+
+        # Shade the critical intervention window (+-5 min around peak)
+        window_lo = max(0, t_crit_min - 5)
+        window_hi = min(t_min[-1], t_crit_min + 5)
+        ax.axvspan(window_lo, window_hi, alpha=0.1, color='#f39c12',
+                   label=f'Intervention window: {window_lo:.0f}–{window_hi:.0f} min')
+
+        ax.annotate(
+            f'Max dP/dt = {max_rate:.2f} lbs/min\n'
+            f'at t = {t_crit_min:.1f} min\n'
+            f'S = {waste_rate_data["S_at_critical"]:.0f} students',
+            xy=(t_crit_min, max_rate),
+            xytext=(t_crit_min + 15, max_rate * 0.85),
+            arrowprops=dict(arrowstyle='->', color='#2c3e50', lw=1.5),
+            fontsize=10,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='wheat', alpha=0.8))
+
+        ax.set_xlabel('Minutes into Lunch Service', fontsize=12)
+        ax.set_ylabel('Plate Waste Rate dP/dt [lbs/min]', fontsize=12)
+        ax.set_title('dP/dt — When Waste Accumulates Fastest', fontweight='bold')
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_xlim(0, t_min[-1])
+        ax.set_ylim(bottom=0)
+
+        # Right panel: Cumulative fraction of total plate waste
+        ax2 = axes[1]
+        ax2.plot(t_min, cum_frac * 100, color='#9b59b6', linewidth=2.5)
+        ax2.fill_between(t_min, 0, cum_frac * 100, alpha=0.15, color='#9b59b6')
+        ax2.axvline(t_crit_min, color='#2c3e50', linestyle='--', linewidth=1.5,
+                    alpha=0.8)
+        ax2.axhline(50, color='gray', linestyle=':', alpha=0.5, label='50% of waste')
+        ax2.axhline(90, color='gray', linestyle=':', alpha=0.5, label='90% of waste')
+
+        # Find when 50% and 90% of waste has accumulated
+        idx_50 = np.searchsorted(cum_frac, 0.50)
+        idx_90 = np.searchsorted(cum_frac, 0.90)
+        if idx_50 < len(t_min):
+            t_50 = t_min[idx_50]
+            ax2.scatter([t_50], [50], color='#9b59b6', s=60, zorder=5)
+            ax2.annotate(f'50% at {t_50:.0f} min', xy=(t_50, 50),
+                         xytext=(t_50 + 10, 42), fontsize=9,
+                         arrowprops=dict(arrowstyle='->', color='#9b59b6'))
+        if idx_90 < len(t_min):
+            t_90 = t_min[idx_90]
+            ax2.scatter([t_90], [90], color='#9b59b6', s=60, zorder=5)
+            ax2.annotate(f'90% at {t_90:.0f} min', xy=(t_90, 90),
+                         xytext=(t_90 + 10, 82), fontsize=9,
+                         arrowprops=dict(arrowstyle='->', color='#9b59b6'))
+
+        ax2.set_xlabel('Minutes into Lunch Service', fontsize=12)
+        ax2.set_ylabel('Cumulative Plate Waste [%]', fontsize=12)
+        ax2.set_title('Cumulative Waste — When Does It Happen?', fontweight='bold')
+        ax2.legend(loc='lower right', fontsize=9)
+        ax2.set_xlim(0, t_min[-1])
+        ax2.set_ylim(0, 105)
+
+        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
 
         if save_path:
@@ -674,14 +794,14 @@ class FoodWasteVisualizer:
 
         fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
-        # W(t) comparison
+        # P(t) plate waste comparison
         ax = axes[0]
-        ax.plot(t_min, baseline['W'], label='Baseline', color='#e74c3c', linewidth=2)
-        ax.plot(t_min, optimized['W'], label=strategy_name, color='#27ae60',
+        ax.plot(t_min, baseline['P'], label='Baseline', color='#e74c3c', linewidth=2)
+        ax.plot(t_min, optimized['P'], label=strategy_name, color='#27ae60',
                 linewidth=2, linestyle='--')
         ax.set_xlabel('Minutes')
-        ax.set_ylabel('Waste [lbs]')
-        ax.set_title('W(t) — Waste Comparison', fontweight='bold')
+        ax.set_ylabel('Plate Waste [lbs]')
+        ax.set_title('P(t) — Plate Waste Comparison', fontweight='bold')
         ax.legend()
 
         # F(t) comparison
@@ -747,10 +867,10 @@ class FoodWasteVisualizer:
             ax.scatter([data['values'][idx_min]], [data['waste'][idx_min]],
                        color=color, s=80, zorder=5)
             ax.set_xlabel(labels.get(param, param), fontsize=11)
-            ax.set_ylabel('Total Waste W(T) [lbs]', fontsize=11)
+            ax.set_ylabel('True Waste [lbs]', fontsize=11)
             ax.set_title(f'Sensitivity to {param}', fontweight='bold')
 
-        plt.suptitle('Sensitivity Analysis — Total Waste', fontsize=14,
+        plt.suptitle('Sensitivity Analysis — True Waste (Plate + Unused)', fontsize=14,
                      fontweight='bold', y=1.02)
         plt.tight_layout()
 
